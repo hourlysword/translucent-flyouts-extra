@@ -3,6 +3,7 @@
 #include "Utils.hpp"
 #include "RegHelper.hpp"
 #include "Framework.hpp"
+#include "ProcessScope.hpp"
 #include "SystemHelper.hpp"
 #include "Application.hpp"
 
@@ -105,12 +106,19 @@ BOOL APIENTRY DllMain(
 			}
 			else if (Api::IsServiceRunning(Application::g_serviceName))
 			{
+				// Defence in depth for the per-process scoping model: the host installs in-context hooks only for
+				// allowed processes, but an event raised about one of our windows by another process can still map
+				// this DLL in. If that process is not one we style, unload instead of initialising anything.
+				if (!ProcessScope::IsCurrentProcessAllowed())
+				{
+					return FALSE;
+				}
+				// Crash-dump capture and its system-modal dialog are opt-in now (EnableMiniDump defaults to 0).
+				// They used to default on everywhere and be forced on in explorer.exe, so TF showed a
+				// "this app may have crashed because of me" dialog for unrelated crashes in other apps.
 				if (
-					(
-						RegHelper::Get<DWORD>({}, L"EnableMiniDump", 1) &&
-						!RegHelper::Get<DWORD>({ L"DisabledList" }, Utils::get_process_name(), 0)
-					) ||
-					!_wcsicmp(Utils::get_process_name().c_str(), L"explorer.exe")
+					RegHelper::Get<DWORD>({}, L"EnableMiniDump", 0) &&
+					!RegHelper::Get<DWORD>({ L"DisabledList" }, Utils::get_process_name(), 0)
 				)
 				{
 					g_old = SetUnhandledExceptionFilter(TopLevelExceptionFilter);

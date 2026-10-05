@@ -220,6 +220,7 @@
     <ClInclude Include="MenuHandler.hpp" />
     <ClInclude Include="MenuHooks.hpp" />
     <ClInclude Include="MenuRendering.hpp" />
+    <ClInclude Include="ProcessScope.hpp" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="KbxLabelHooks.hpp" />
@@ -243,6 +244,7 @@
     <ClCompile Include="MenuHandler.cpp" />
     <ClCompile Include="MenuHooks.cpp" />
     <ClCompile Include="MenuRendering.cpp" />
+    <ClCompile Include="ProcessScope.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

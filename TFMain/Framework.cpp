@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "resource.h"
 #include "Utils.hpp"
 #include "RegHelper.hpp"
@@ -42,64 +42,23 @@ namespace TranslucentFlyouts::Framework
 		TooltipHandler::Update,
 		DropDownHandler::Update
 	};
-	
-	bool g_startup{false};
 
-	void DoExplorerCrashCheck()
+	bool g_startup{ false };
+
+	// Settings used to be re-read from the registry on every single window event, on the UI thread of every
+	// hooked process. Throttle that to a few times a second per thread; a menu re-reads its own settings when it
+	// actually opens (MN_SIZEWINDOW), so nothing the user sees is delayed.
+	constexpr ULONGLONG g_updateIntervalMs{ 250 };
+	void ThrottledUpdate()
 	{
-		static std::chrono::steady_clock::time_point g_lastExplorerDied{ std::chrono::steady_clock::time_point{} - std::chrono::seconds(30) };
-		static DWORD g_lastExplorerPid
-		{ 
-			[]
-			{
-				DWORD explorerPid{ 0 };
-				GetWindowThreadProcessId(GetShellWindow(), &explorerPid);
-
-				return explorerPid;
-			} ()
-		};
-		
-		DWORD explorerPid{ 0 };
-		GetWindowThreadProcessId(GetShellWindow(), &explorerPid);
-
-		if (explorerPid)
+		static thread_local ULONGLONG s_lastUpdate{ 0 };
+		const auto now{ GetTickCount64() };
+		if (now - s_lastUpdate < g_updateIntervalMs)
 		{
-			g_lastExplorerPid = explorerPid;
+			return;
 		}
-
-		// Died twice in a short time!
-		if (g_lastExplorerPid && explorerPid == 0)
-		{
-			const auto currentTimePoint{ std::chrono::steady_clock::now() };
-
-			if (currentTimePoint < g_lastExplorerDied + std::chrono::seconds(30)) [[unlikely]]
-			{
-				Application::UninstallHook();
-
-				if (
-					MessageBoxW(
-						nullptr,
-						Utils::GetResWString<IDS_STRING109>().c_str(),
-						nullptr,
-						MB_ICONERROR | MB_SYSTEMMODAL | MB_SERVICE_NOTIFICATION | MB_SETFOREGROUND | MB_YESNO
-					) == IDNO
-				)
-				{
-					Application::InstallHook();
-				}
-				else
-				{
-					std::thread{ [&]
-					{
-						Application::StopService();
-					} }.detach();
-				}
-				return;
-			}
-
-			g_lastExplorerDied = currentTimePoint;
-			g_lastExplorerPid = 0;
-		}
+		s_lastUpdate = now;
+		Update();
 	}
 }
 
@@ -109,16 +68,19 @@ void CALLBACK Framework::HandleWinEvent(
 	DWORD dwEventThread, DWORD dwmsEventTime
 )
 {
+	// The service host installs the hooks but must never style its own windows. In the default per-process
+	// model the host is not hooked at all; this guard still matters in the opt-in legacy global-hook mode,
+	// where one in-context hook reaches every process including the host. Explorer-crash handling now lives in
+	// ProcessScope::Host (it watches each hooked process's exit code) instead of polling here on every event.
 	if (Api::IsHostProcess(Application::g_serviceName))
 	{
-		DoExplorerCrashCheck();
 		return;
 	}
 	if (!g_startup)
 	{
 		return;
 	}
-	Update();
+	ThrottledUpdate();
 
 	DWORD processId{ 0 };
 	GetWindowThreadProcessId(hWnd, &processId);

@@ -77,6 +77,9 @@
     <ClInclude Include="MenuRendering.hpp">
       <Filter>头文件\Menu</Filter>
     </ClInclude>
+    <ClInclude Include="ProcessScope.hpp">
+      <Filter>头文件\Main</Filter>
+    </ClInclude>
     <ClInclude Include="UxThemeHooks.hpp">
       <Filter>头文件\Menu</Filter>
     </ClInclude>
@@ -147,6 +150,9 @@
     </ClCompile>
     <ClCompile Include="MenuRendering.cpp">
       <Filter>源文件\Menu</Filter>
+    </ClCompile>
+    <ClCompile Include="ProcessScope.cpp">
+      <Filter>源文件\Main</Filter>
     </ClCompile>
     <ClCompile Include="UxThemeHooks.cpp">
       <Filter>源文件\Menu</Filter>

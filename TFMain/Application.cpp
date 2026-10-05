@@ -3,6 +3,7 @@
 #include "Utils.hpp"
 #include "Api.hpp"
 #include "Framework.hpp"
+#include "ProcessScope.hpp"
 #include "Application.hpp"
 
 using namespace TranslucentFlyouts;
@@ -42,14 +43,11 @@ HRESULT Application::InstallHook()
 	RETURN_LAST_ERROR_IF_NULL(serviceInfo);
 	RETURN_HR_IF(HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS), serviceInfo->hook != nullptr);
 
-	serviceInfo->hook = SetWinEventHook(
-		EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE,
-		wil::GetModuleInstanceHandle(),
-		Framework::HandleWinEvent,
-		0, 0,
-		WINEVENT_INCONTEXT
-	);
-	RETURN_LAST_ERROR_IF_NULL(serviceInfo->hook);
+	// Standalone scoping: instead of one global in-context hook (which mapped TFMain into every process that
+	// raised a window event), the host watches for windows out-of-context and installs a per-process in-context
+	// hook only for processes that pass the policy in ProcessScope. By default that is Explorer only.
+	RETURN_IF_FAILED(ProcessScope::Host::Start(serviceInfo->hostWindow, wil::GetModuleInstanceHandle(), Framework::HandleWinEvent));
+	serviceInfo->hook = ProcessScope::Host::GetPrimaryHook();
 	SendNotifyMessageW(HWND_BROADCAST, WM_NULL, 0, 0);
 
 	return S_OK;
@@ -61,7 +59,7 @@ HRESULT Application::UninstallHook()
 	auto serviceInfo{ Api::GetServiceInfo(g_serviceName, false) };
 	RETURN_LAST_ERROR_IF_NULL(serviceInfo);
 	RETURN_HR_IF_NULL(HRESULT_FROM_WIN32(ERROR_HOOK_NOT_INSTALLED), serviceInfo->hook);
-	RETURN_IF_WIN32_BOOL_FALSE(UnhookWinEvent(serviceInfo->hook));
+	ProcessScope::Host::Stop();
 	serviceInfo->hook = nullptr;
 	SendNotifyMessageW(HWND_BROADCAST, WM_NULL, 0, 0);
 
@@ -110,6 +108,9 @@ HRESULT Application::StartService(HWND hWnd)
 
 	auto callback = [](HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) -> LRESULT
 	{
+		// Explorer restarting (or any new shell process) broadcasts this; re-evaluate what to hook.
+		static const UINT s_taskbarCreated{ RegisterWindowMessageW(L"TaskbarCreated") };
+
 		if (uMsg == WM_ENDSESSION || uMsg == GetStopMsg())
 		{
 			DestroyWindow(hWnd);
@@ -117,6 +118,14 @@ HRESULT Application::StartService(HWND hWnd)
 		if (uMsg == WM_DESTROY)
 		{
 			PostQuitMessage(0);
+		}
+		if (uMsg == ProcessScope::Host::GetTargetExitedMsg())
+		{
+			ProcessScope::Host::OnTargetExited(static_cast<DWORD>(wParam));
+		}
+		if (uMsg == s_taskbarCreated)
+		{
+			ProcessScope::Host::Resync();
 		}
 		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
 	};
