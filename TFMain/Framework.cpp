@@ -5,6 +5,7 @@
 #include "Framework.hpp"
 #include "DwmThumbnailAPI.hpp"
 #include "Application.hpp"
+#include "ProcessScope.hpp"
 #include "MenuHandler.hpp"
 #include "TooltipHandler.hpp"
 #include "DropDownHandler.hpp"
@@ -60,6 +61,66 @@ namespace TranslucentFlyouts::Framework
 		s_lastUpdate = now;
 		Update();
 	}
+
+	// Only used in the opt-in legacy global-hook mode. In the default per-process model the host is not hooked,
+	// so Explorer-crash handling is done by ProcessScope::Host from each target's exit code instead. This keeps
+	// the pre-3.2 safety net for legacy mode: if Explorer dies twice in 30s, offer to stop TF.
+	void DoExplorerCrashCheck()
+	{
+		static std::chrono::steady_clock::time_point g_lastExplorerDied{ std::chrono::steady_clock::time_point{} - std::chrono::seconds(30) };
+		static DWORD g_lastExplorerPid
+		{
+			[]
+			{
+				DWORD explorerPid{ 0 };
+				GetWindowThreadProcessId(GetShellWindow(), &explorerPid);
+
+				return explorerPid;
+			} ()
+		};
+
+		DWORD explorerPid{ 0 };
+		GetWindowThreadProcessId(GetShellWindow(), &explorerPid);
+
+		if (explorerPid)
+		{
+			g_lastExplorerPid = explorerPid;
+		}
+
+		// Died twice in a short time!
+		if (g_lastExplorerPid && explorerPid == 0)
+		{
+			const auto currentTimePoint{ std::chrono::steady_clock::now() };
+
+			if (currentTimePoint < g_lastExplorerDied + std::chrono::seconds(30)) [[unlikely]]
+			{
+				Application::UninstallHook();
+
+				if (
+					MessageBoxW(
+						nullptr,
+						Utils::GetResWString<IDS_STRING109>().c_str(),
+						nullptr,
+						MB_ICONERROR | MB_SYSTEMMODAL | MB_SERVICE_NOTIFICATION | MB_SETFOREGROUND | MB_YESNO
+					) == IDNO
+				)
+				{
+					Application::InstallHook();
+				}
+				else
+				{
+					std::thread{ []
+					{
+						Application::StopService();
+					} }.detach();
+				}
+				return;
+			}
+
+			g_lastExplorerDied = currentTimePoint;
+			g_lastExplorerPid = 0;
+		}
+	}
 }
 
 void CALLBACK Framework::HandleWinEvent(
@@ -74,6 +135,11 @@ void CALLBACK Framework::HandleWinEvent(
 	// ProcessScope::Host (it watches each hooked process's exit code) instead of polling here on every event.
 	if (Api::IsHostProcess(Application::g_serviceName))
 	{
+		// Reached only in legacy global-hook mode (the per-process model never hooks the host).
+		if (ProcessScope::IsLegacyGlobalHook())
+		{
+			DoExplorerCrashCheck();
+		}
 		return;
 	}
 	if (!g_startup)

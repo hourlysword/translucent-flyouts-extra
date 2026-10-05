@@ -164,10 +164,7 @@ const wchar_t* ProcessScope::DenyReasonForImagePath(std::wstring_view imagePath)
 	{
 		return L"unknown image path";
 	}
-	if (IsGameOrLauncherPath(imagePath))
-	{
-		return L"game or launcher folder";
-	}
+	// BlockList is the user's absolute "never" and wins over everything below.
 	if (RegHelper::Get<DWORD>({ L"BlockList" }, std::wstring{ BaseName(imagePath) }, 0) != 0)
 	{
 		return L"BlockList";
@@ -176,9 +173,15 @@ const wchar_t* ProcessScope::DenyReasonForImagePath(std::wstring_view imagePath)
 	{
 		return IsExplorerHookingEnabled() ? nullptr : L"HookExplorer is 0";
 	}
+	// An explicit AllowList entry is a deliberate opt-in, so it overrides the game/launcher heuristic below
+	// (a user may genuinely want to style an app that happens to live under, say, an Epic Games folder).
 	if (IsInUserAllowList(imagePath))
 	{
 		return nullptr;
+	}
+	if (IsGameOrLauncherPath(imagePath))
+	{
+		return L"game or launcher folder";
 	}
 	return L"not in AllowList";
 }
@@ -575,6 +578,10 @@ void ProcessScope::Host::Resync()
 	{
 		return;
 	}
+	// Drop every cached verdict so each process is judged fresh. This is what lets a resume after an Explorer
+	// crash re-hook the still-running Explorer, and lets runtime AllowList/BlockList edits take effect on the
+	// next resync. Processes that are already hooked are still skipped (Consider checks g_targets first).
+	g_decided.clear();
 	EnumWindows([](HWND hwnd, LPARAM) -> BOOL
 	{
 		DWORD processId{ 0 };
