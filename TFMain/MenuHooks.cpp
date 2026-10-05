@@ -5,6 +5,7 @@
 #include "RegHelper.hpp"
 #include "HookHelper.hpp"
 #include "SymbolResolver.hpp"
+#include "SystemHelper.hpp"
 #include "MenuHooks.hpp"
 
 using namespace TranslucentFlyouts;
@@ -138,7 +139,10 @@ void MenuHooks::Prepare()
 		return;
 	}
 
-	if (!RegHelper::Get<DWORD>({ L"Menu" }, L"NoModernAppBackgroundColor", 1))
+	// Removing the UWP icon colour plate needs private shell32 symbols. On Windows 11 24H2+ (build 26100) that
+	// symbol walk is the main cause of startup failures after an update, and the plates are largely gone there,
+	// so it defaults off on those builds. An explicit registry value still wins.
+	if (!RegHelper::Get<DWORD>({ L"Menu" }, L"NoModernAppBackgroundColor", SystemHelper::g_buildNumber >= 26100 ? 0 : 1))
 	{
 		return;
 	}

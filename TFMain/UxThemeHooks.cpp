@@ -692,7 +692,10 @@ void __thiscall UxThemeHooks::CThemeMenu::MyDrawItemBitmap2(HWND hWnd, HDC hdc, 
 
 void UxThemeHooks::Prepare()
 {
-	g_useCompatibleMode = static_cast<bool>(RegHelper::Get<DWORD>({ L"Menu" }, L"EnableCompatibilityMode", 0));
+	// On Windows 11 24H2+ (build 26100) the uxtheme symbol resolution and byte-scan path is fragile across
+	// updates, so compatibility mode (hook the exported DrawThemeBackground/DrawThemeText, no symbols) is the
+	// default there. An explicit registry value still wins.
+	g_useCompatibleMode = static_cast<bool>(RegHelper::Get<DWORD>({ L"Menu" }, L"EnableCompatibilityMode", SystemHelper::g_buildNumber >= 26100 ? 1 : 0));
 	if (IsE8OffsetAllReady())
 	{
 		return;

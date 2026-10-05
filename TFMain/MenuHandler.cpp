@@ -125,7 +125,8 @@ void MenuHandler::Update()
 
 	MenuHooks::EnableHooks(true);
 
-	if (!RegHelper::Get<DWORD>({ L"Menu" }, L"NoModernAppBackgroundColor", 1))
+	// Matches MenuHooks::Prepare: default off on Windows 11 24H2+ (build 26100) to avoid the shell32 symbol walk.
+	if (!RegHelper::Get<DWORD>({ L"Menu" }, L"NoModernAppBackgroundColor", SystemHelper::g_buildNumber >= 26100 ? 0 : 1))
 	{
 		MenuHooks::EnableIconHooks(false);
 	}

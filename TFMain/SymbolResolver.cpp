@@ -139,7 +139,7 @@ HRESULT SymbolResolver::Walk(std::wstring_view dllName, std::string_view mask, s
 		THROW_LAST_ERROR_IF(GetModuleFileName(wil::GetModuleInstanceHandle(), curDir, MAX_PATH) == 0);
 		THROW_IF_FAILED(PathCchRemoveFileSpec(curDir, MAX_PATH));
 
-		std::wstring symPath{std::format(L"SRV*{}\\symbols*http://msdl.microsoft.com/download/symbols", curDir)};
+		std::wstring symPath{std::format(L"SRV*{}\\symbols*https://msdl.microsoft.com/download/symbols", curDir)};
 		
 		DWORD options = SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_DEBUG);
 		
