@@ -185,7 +185,8 @@ ExecutionParameters AnalyseCommandLine(LPCWSTR lpCmdLine)
 		{
 			params.type = ExecutionParameters::CommandType::ClearCache;
 		}
-		if (!_wcsicmp(argv[i], L"/silent") || !_wcsicmp(argv[i], L"/s") || !_wcsicmp(argv[i], L"-silent") || !_wcsicmp(argv[i], L"-s"))
+		// '/s' is the documented short form of '/stop'; it used to be accepted here too, so 'Main /start /s' stopped TF.
+		if (!_wcsicmp(argv[i], L"/silent") || !_wcsicmp(argv[i], L"-silent"))
 		{
 			params.silent = true;
 		}

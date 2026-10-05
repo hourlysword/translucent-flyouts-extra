@@ -92,7 +92,6 @@ namespace TranslucentFlyouts
 		}
 		
 		void WriteMemory(PVOID memoryAddress, const std::function<void()>&& callback);
-		PVOID InjectCallbackToThread(DWORD threadId, const std::function<void()>& callback);
 		HMODULE GetProcessModule(HANDLE processHandle, std::wstring_view dllPath);
 
 		void WalkIAT(PVOID baseAddress, std::string_view dllName, std::function<bool(PVOID* functionAddress, LPCSTR functionNameOrOrdinal, BOOL importedByName)> callback);
@@ -248,11 +247,13 @@ namespace TranslucentFlyouts
 					{
 						worker();
 					}
-					// SetWindowSubclass cannot work for the window which is not in the same thread!
-					// So here we have to use a tricky way to achieve the goal...
+					// SetWindowSubclass only works from the window's own thread. The previous fallback hijacked the
+					// owning thread's instruction pointer with shellcode that preserved only rax/rcx and ignored stack
+					// alignment and lock state. The WinEvent hook already runs on the window's thread, so this path is
+					// rare; such windows are now skipped instead.
 					else
 					{
-						InjectCallbackToThread(threadId, worker);
+						LOG_HR_MSG(E_NOTIMPL, "Cross-thread window %p skipped (owning thread %lu)", hwnd, threadId);
 					}
 				}
 				else

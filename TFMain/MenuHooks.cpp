@@ -106,7 +106,13 @@ BOOL WINAPI MenuHooks::MySetMenuInfo(
 		g_targetModule = callerModule;
 	}
 
-	return reinterpret_cast<decltype(&MySetMenuInfo)>(std::get<0>(g_hookTable[reinterpret_cast<PVOID>(callerModule)]))(hMenu, menuInfo);
+	// operator[] would insert a null entry and call through it if this module was unhooked concurrently.
+	auto hookEntry{ g_hookTable.find(reinterpret_cast<PVOID>(callerModule)) };
+	if (hookEntry == g_hookTable.end() || !std::get<0>(hookEntry->second)) [[unlikely]]
+	{
+		return SetMenuInfo(hMenu, menuInfo);
+	}
+	return reinterpret_cast<decltype(&MySetMenuInfo)>(std::get<0>(hookEntry->second))(hMenu, menuInfo);
 }
 HRESULT WINAPI MenuHooks::MyGetBackgroundColorForAppUserModelId(
 	PCWSTR /*pszItem*/, 

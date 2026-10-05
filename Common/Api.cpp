@@ -157,7 +157,7 @@ bool Api::InteractiveIO::OutputToConsole(
 	}
 
 	auto outputString{std::format(L"{}{}{}", prefixStr, std::wstring_view{ buffer, static_cast<size_t>(length) }, additionalStr)};
-	wprintf_s(outputString.c_str());
+	wprintf_s(L"%ls", outputString.c_str());
 #ifdef _DEBUG
 	OutputDebugStringW(outputString.c_str());
 #endif

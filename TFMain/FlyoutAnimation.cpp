@@ -42,11 +42,15 @@ namespace TranslucentFlyouts::FlyoutAnimation
 		}
 
 		virtual void Animator(ULONGLONG /*currentTimeStamp*/) {}
+		// Called once by the worker thread when the animation has run its course, before the worker drops its
+		// reference. Must not assume it runs on the UI thread.
+		virtual void OnExpired() {}
 
 		HWND window{ nullptr };
 		std::chrono::milliseconds duration{ 0 };
 		ULONGLONG startTimeStamp{ GetTickCount64() };
-		ULONGLONG endTimeStamp{ startTimeStamp + duration.count() };
+		// Written by the UI thread (SetDuration) and read by the worker thread.
+		std::atomic<ULONGLONG> endTimeStamp{ startTimeStamp + duration.count() };
 	};
 
 	class AnimationWorker
@@ -182,11 +186,43 @@ namespace TranslucentFlyouts::FlyoutAnimation
 		void Animator(ULONGLONG currentTimeStamp) override;
 	};
 
+	class PopupIn;
+	// Every live pop-in animation, keyed by its menu window. The menu's subclass procedure looks the animation up
+	// here and takes a strong reference for the duration of each message. Previously it held a raw pointer that
+	// the worker thread could free at any time, which hovering over an expiring menu turned into a use-after-free.
+	wil::srwlock g_popupInLock{};
+	std::unordered_map<HWND, std::shared_ptr<PopupIn>> g_popupInRegistry{};
+	std::shared_ptr<PopupIn> LookupPopupIn(HWND hWnd)
+	{
+		auto lock{ g_popupInLock.lock_shared() };
+		auto it{ g_popupInRegistry.find(hWnd) };
+		return it == g_popupInRegistry.end() ? nullptr : it->second;
+	}
+	void RegisterPopupIn(HWND hWnd, std::shared_ptr<PopupIn> animation)
+	{
+		auto lock{ g_popupInLock.lock_exclusive() };
+		g_popupInRegistry[hWnd] = std::move(animation);
+	}
+	// Returns the removed reference so the caller decides on which thread it is released.
+	std::shared_ptr<PopupIn> UnregisterPopupIn(HWND hWnd)
+	{
+		auto lock{ g_popupInLock.lock_exclusive() };
+		auto it{ g_popupInRegistry.find(hWnd) };
+		if (it == g_popupInRegistry.end())
+		{
+			return nullptr;
+		}
+		auto animation{ std::move(it->second) };
+		g_popupInRegistry.erase(it);
+		return animation;
+	}
+
 	class PopupIn : public AnimationInfo
 	{
 	protected:
 		bool							m_reverse{ false };
 		bool							m_started{ false };
+		std::atomic<bool>				m_finished{ false };
 		bool							m_immediateInterupting{ false };
 		bool							m_useSysDropShadow{ false };
 		float							m_cornerRadius{ 0.f };// 0.f, 4.f, 8.f
@@ -829,8 +865,13 @@ namespace TranslucentFlyouts::FlyoutAnimation
 			return;
 		}
 
+		// Idempotent: reached from the worker thread (OnExpired) and from the UI thread (failure paths, destructor).
 		void Finish()
 		{
+			if (m_finished.exchange(true))
+			{
+				return;
+			}
 			Utils::CloakWindow(m_menuWindow, FALSE);
 			Utils::CloakWindow(window, TRUE);
 			// Wait for DWM
@@ -841,7 +882,7 @@ namespace TranslucentFlyouts::FlyoutAnimation
 		{
 			THROW_HR_IF(
 				E_FAIL,
-				!SetWindowSubclass(m_menuWindow, SubclassProc, 0, reinterpret_cast<DWORD_PTR>(this))
+				!SetWindowSubclass(m_menuWindow, SubclassProc, 0, 0)
 			);
 		}
 		void Detach()
@@ -855,9 +896,15 @@ namespace TranslucentFlyouts::FlyoutAnimation
 			}
 		}
 
-		static LRESULT CALLBACK SubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR /*uIdSubclass*/, DWORD_PTR dwRefData)
+		static LRESULT CALLBACK SubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR /*uIdSubclass*/, DWORD_PTR /*dwRefData*/)
 		{
-			PopupIn& popupInAnimation{ *reinterpret_cast<PopupIn*>(dwRefData) };
+			// Strong reference for the duration of this message; the worker thread may drop its own at any time.
+			auto animation{ LookupPopupIn(hWnd) };
+			if (!animation)
+			{
+				return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+			}
+			PopupIn& popupInAnimation{ *animation };
 
 			if (uMsg == WM_WINDOWPOSCHANGED)
 			{
@@ -883,6 +930,7 @@ namespace TranslucentFlyouts::FlyoutAnimation
 					// Interupt the running animation
 					popupInAnimation.SetDuration(0ms);
 					popupInAnimation.Detach();
+					UnregisterPopupIn(hWnd);
 				}
 			}
 
@@ -906,12 +954,15 @@ namespace TranslucentFlyouts::FlyoutAnimation
 				// Interupt the running animation
 				popupInAnimation.SetDuration(0ms);
 				popupInAnimation.Detach();
+				UnregisterPopupIn(hWnd);
 			}
 
-			// ~PopupIn() sends TFM_ANIMATIONFINISHED to the SubclassProc
+			// OnExpired() sends TFM_ANIMATIONFINISHED from the worker thread; detach and release here, on the
+			// menu's own thread, so the object is never freed while its subclass is still attached.
 			if (uMsg == GetAnimationFinishedMsg())
 			{
 				popupInAnimation.Detach();
+				UnregisterPopupIn(hWnd);
 			}
 
 			return DefSubclassProc(hWnd, uMsg, wParam, lParam);
@@ -979,6 +1030,8 @@ namespace TranslucentFlyouts::FlyoutAnimation
 				dcompDevice->CreateTargetForHwnd(window, TRUE, &m_dcompTarget)
 			);
 
+			// Private dwmapi ordinal; fail cleanly if a future build no longer exports it.
+			THROW_HR_IF_NULL(E_NOTIMPL, DwmThumbnailAPI::g_actualDwmpCreateSharedThumbnailVisual);
 			DWM_THUMBNAIL_PROPERTIES thumbnailProperties
 			{
 				DWM_TNP_VISIBLE | DWM_TNP_RECTDESTINATION | DWM_TNP_SOURCECLIENTAREAONLY | DwmThumbnailAPI::DWM_TNP_ENABLE3D,
@@ -1036,12 +1089,8 @@ namespace TranslucentFlyouts::FlyoutAnimation
 		catch (...)
 		{
 			Finish();
-			if (m_menuWindow)
-			{
-				// DO NOT USE SendMessage HERE OTHERWISE IT WILL CAUSE DEAD LOCK
-				SendNotifyMessageW(m_menuWindow, GetAnimationFinishedMsg(), 0, 0);
-				m_menuWindow = nullptr;
-			}
+			// Construction runs on the menu's thread, so the subclass can be removed directly.
+			Detach();
 			if (window)
 			{
 				SendNotifyMessageW(window, WM_CLOSE, 0, 0);
@@ -1063,15 +1112,23 @@ namespace TranslucentFlyouts::FlyoutAnimation
 				m_backdropThumbnail = nullptr;
 			}
 		}
+		HWND GetMenuWindow() const { return m_menuWindow; }
+
+		// Runs on the worker thread. Ends the visual part and asks the menu's thread to detach; that thread
+		// then releases the registry reference (see SubclassProc).
+		void OnExpired() override
+		{
+			Finish();
+			if (HWND menuWindow{ m_menuWindow })
+			{
+				// DO NOT USE SendMessage HERE OTHERWISE IT WILL CAUSE DEAD LOCK
+				SendNotifyMessageW(menuWindow, GetAnimationFinishedMsg(), 0, 0);
+			}
+		}
+
 		virtual ~PopupIn() noexcept
 		{
 			Finish();
-			if (m_menuWindow)
-			{
-				// DO NOT USE SendMessage HERE OTHERWISE IT WILL CAUSE DEAD LOCK
-				SendNotifyMessageW(m_menuWindow, GetAnimationFinishedMsg(), 0, 0);
-				m_menuWindow = nullptr;
-			}
 			if (window)
 			{
 				SendNotifyMessageW(window, WM_CLOSE, 0, 0);
@@ -1250,12 +1307,13 @@ namespace TranslucentFlyouts::FlyoutAnimation
 DWORD WINAPI FlyoutAnimation::AnimationWorker::ThreadProc(LPVOID lpThreadParameter)
 {
 	auto cleanUp{ wil::get_module_reference_for_thread() };
+	// Schedule() took a reference on our behalf so the module could not unload before the line above ran.
+	FreeLibrary(wil::GetModuleInstanceHandle());
 	auto& animationWorker{ *reinterpret_cast<AnimationWorker*>(lpThreadParameter) };
 
 	// We can use it to reuse thread
 	constexpr ULONGLONG maxDelayExitingTicks{ 1000 };
-	ULONGLONG delayExitingStartTimeStamp{ 0 };
-	ULONGLONG delayExitingTicks{ 0 };
+	ULONGLONG delayExitingStartTimeStamp{ GetTickCount64() };
 
 	std::vector<std::shared_ptr<AnimationInfo>> animationStorage{};
 	SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -1266,22 +1324,20 @@ DWORD WINAPI FlyoutAnimation::AnimationWorker::ThreadProc(LPVOID lpThreadParamet
 			auto lock{ animationWorker.m_lock.lock_exclusive() };
 			animationStorage.insert(animationStorage.end(), animationWorker.m_animationStorage.begin(), animationWorker.m_animationStorage.end());
 			animationWorker.m_animationStorage.clear();
+
+			// No animation tasks left, now leaving. Decided under the lock so that Schedule() cannot queue work
+			// for a thread that is about to exit; that race left the menu cloaked and invisible.
+			if (animationStorage.empty() && GetTickCount64() - delayExitingStartTimeStamp >= maxDelayExitingTicks)
+			{
+				animationWorker.m_threadId = 0;
+				break;
+			}
 		}
 
 		{
 			auto currentTimeStamp{ GetTickCount64() };
-			delayExitingTicks = currentTimeStamp - delayExitingStartTimeStamp;
 
-			// No animation tasks left, now leaving
-			if (animationStorage.empty())
-			{
-				if (delayExitingTicks >= maxDelayExitingTicks)
-				{
-					animationWorker.m_threadId = 0;
-					break;
-				}
-			}
-			else
+			if (!animationStorage.empty())
 			{
 				delayExitingStartTimeStamp = currentTimeStamp;
 
@@ -1298,7 +1354,8 @@ DWORD WINAPI FlyoutAnimation::AnimationWorker::ThreadProc(LPVOID lpThreadParamet
 					}
 					else
 					{
-						// Animation already completed, erase it
+						// Animation already completed: let it finish its visuals, then drop our reference.
+						animationInfo->OnExpired();
 						it = animationStorage.erase(it);
 					}
 				}
@@ -1323,7 +1380,18 @@ void FlyoutAnimation::AnimationWorker::Schedule(std::shared_ptr<AnimationInfo> a
 	// We have no animation worker thread, create one
 	if (m_threadId == 0)
 	{
+		// Hold the module for the new thread until it has taken its own reference (see ThreadProc).
+		HMODULE self{ nullptr };
+		GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(&ThreadProc), &self);
 		wil::unique_handle threadHandle{ CreateThread(nullptr, 0, ThreadProc, this, 0, &m_threadId) };
+		if (!threadHandle)
+		{
+			m_threadId = 0;
+			if (self)
+			{
+				FreeLibrary(self);
+			}
+		}
 	}
 }
 
@@ -1462,9 +1530,12 @@ HRESULT FlyoutAnimation::CreateMenuPopupIn(
 ) try
 {
 	auto& animationWorker{ AnimationWorker::GetInstance() };
-	animationWorker.Schedule(
-		make_shared<MenuPopupIn>(hWnd, Utils::GetCurrentMenuOwner(), startPosRatio, popupInDuration, fadeInDuration, animationStyle, MenuHandler::g_menuContext.animation.immediateInterupting)
-	);
+	auto animation{ make_shared<MenuPopupIn>(hWnd, Utils::GetCurrentMenuOwner(), startPosRatio, popupInDuration, fadeInDuration, animationStyle, MenuHandler::g_menuContext.animation.immediateInterupting) };
+	if (animation->GetMenuWindow())
+	{
+		RegisterPopupIn(animation->GetMenuWindow(), animation);
+	}
+	animationWorker.Schedule(animation);
 
 	return S_OK;
 }
@@ -1482,9 +1553,12 @@ HRESULT FlyoutAnimation::CreateDropDownPopupIn(
 ) try
 {
 	auto& animationWorker{ AnimationWorker::GetInstance() };
-	animationWorker.Schedule(
-		make_shared<DropDownPopupIn>(hWnd, reinterpret_cast<HWND>(GetWindowLongPtrW(hWnd, GWLP_HWNDPARENT)), startPosRatio, popupInDuration, fadeInDuration, animationStyle, MenuHandler::g_menuContext.animation.immediateInterupting)
-	);
+	auto animation{ make_shared<DropDownPopupIn>(hWnd, reinterpret_cast<HWND>(GetWindowLongPtrW(hWnd, GWLP_HWNDPARENT)), startPosRatio, popupInDuration, fadeInDuration, animationStyle, MenuHandler::g_menuContext.animation.immediateInterupting) };
+	if (animation->GetMenuWindow())
+	{
+		RegisterPopupIn(animation->GetMenuWindow(), animation);
+	}
+	animationWorker.Schedule(animation);
 
 	return S_OK;
 }

@@ -1016,6 +1016,13 @@ void UxThemeHooks::Startup()
 		g_trampolinePool = std::make_unique<TrampolinePool>(uxthemeModule);
 		g_myDrawThemeText_Trampoline = g_trampolinePool->Allocate(UxThemeHooks::MyDrawThemeText);
 		g_myDrawThemeBackground_Trampoline = g_trampolinePool->Allocate(UxThemeHooks::MyDrawThemeBackground);
+		if (!g_myDrawThemeText_Trampoline || !g_myDrawThemeBackground_Trampoline)
+		{
+			// No executable region within jump range of uxtheme.dll (or the process forbids dynamic code).
+			// Rewriting its call sites with a null target would crash every menu, so hook the exports instead.
+			g_trampolinePool.reset();
+			g_compatibleMode = true;
+		}
 	}
 	g_hookDispatcher.moduleAddress = uxthemeModule;
 	g_hookDispatcher.CacheHookData();
@@ -1117,7 +1124,7 @@ void UxThemeHooks::EnableHooks(bool enable)
 				HookHelper::Detours::Attach(reinterpret_cast<PVOID*>(&g_actualDrawThemeBackground), MyDrawThemeBackground);
 				HookHelper::Detours::Attach(reinterpret_cast<PVOID*>(&g_actualDrawThemeText), MyDrawThemeText);
 			}
-			else
+			else if (g_actualCThemeMenu_DrawItemBitmap)
 			{
 				HookHelper::Detours::Attach(&g_actualCThemeMenu_DrawItemBitmap, g_detourCThemeMenu_DrawItemBitmap);
 			}
@@ -1167,7 +1174,7 @@ void UxThemeHooks::DisableHooksInternal()
 				HookHelper::Detours::Detach(reinterpret_cast<PVOID*>(&g_actualDrawThemeBackground), MyDrawThemeBackground);
 				HookHelper::Detours::Detach(reinterpret_cast<PVOID*>(&g_actualDrawThemeText), MyDrawThemeText);
 			}
-			else
+			else if (g_actualCThemeMenu_DrawItemBitmap)
 			{
 				HookHelper::Detours::Detach(&g_actualCThemeMenu_DrawItemBitmap, g_detourCThemeMenu_DrawItemBitmap);
 			}
