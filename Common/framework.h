@@ -32,6 +32,13 @@
 #include <vsstyle.h>
 #include <vssym32.h>
 
+// Windows SDK 10.0.26100 renamed MENU_POPUPITEM_FOCUSABLE to MENU_POPUPITEMFOCUSABLE (same value, 27).
+// Older SDKs declare the old name as an enumerator, which has already been processed above, so this
+// macro only takes effect when the SDK no longer provides the old spelling.
+#ifndef MENU_POPUPITEM_FOCUSABLE
+#define MENU_POPUPITEM_FOCUSABLE 27
+#endif
+
 #pragma comment(lib, "windowsapp.lib")
 #pragma comment(lib, "version.lib")
 

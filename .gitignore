@@ -354,3 +354,7 @@ MigrationBackup/
 # Custom rules
 *.rar
 *.zip
+# Build output of this solution
+/Build/
+/Cache/
+/packages/
