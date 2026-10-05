@@ -234,7 +234,9 @@ HRESULT Application::InstallApp() try
 			THROW_IF_FAILED(setting->put_DisallowStartIfOnBatteries(VARIANT_FALSE));
 			THROW_IF_FAILED(setting->put_AllowDemandStart(VARIANT_TRUE));
 			THROW_IF_FAILED(setting->put_StartWhenAvailable(VARIANT_FALSE));
-			THROW_IF_FAILED(setting->put_MultipleInstances(TASK_INSTANCES_PARALLEL));
+			// Don't start a second copy if one is already running for this user; a duplicate would hit the
+			// "instance already running" path and used to show an error dialog on fast user switching (issue 152).
+			THROW_IF_FAILED(setting->put_MultipleInstances(TASK_INSTANCES_IGNORE_NEW));
 		}
 
 		{
@@ -261,7 +263,7 @@ HRESULT Application::InstallApp() try
 			THROW_IF_FAILED(
 				execAction->put_Arguments(
 					const_cast<BSTR>(
-						std::format(L"\"{}\",Main /start", modulePath).c_str()
+						std::format(L"\"{}\",Main /start /silent", modulePath).c_str()
 						)
 				)
 			);
@@ -272,6 +274,32 @@ HRESULT Application::InstallApp() try
 
 		com_ptr<ITrigger> trigger{ nullptr };
 		THROW_IF_FAILED(triggerColl->Create(TASK_TRIGGER_LOGON, &trigger));
+
+		{
+			// Fire the logon trigger only for the installing user, so another user signing in does not start a
+			// second instance in the wrong session (issue 152). Build DOMAIN\User from this process's token.
+			com_ptr<ILogonTrigger> logonTrigger{ trigger.try_query<ILogonTrigger>() };
+			if (logonTrigger)
+			{
+				wil::unique_handle token{ nullptr };
+				if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, token.put()))
+				{
+					BYTE userBuffer[sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE]{};
+					DWORD returned{ 0 };
+					if (GetTokenInformation(token.get(), TokenUser, userBuffer, sizeof(userBuffer), &returned))
+					{
+						auto sid{ reinterpret_cast<TOKEN_USER*>(userBuffer)->User.Sid };
+						WCHAR account[MAX_PATH + 1]{}, domain[MAX_PATH + 1]{};
+						DWORD accountLength{ _countof(account) }, domainLength{ _countof(domain) };
+						SID_NAME_USE use{};
+						if (LookupAccountSidW(nullptr, sid, account, &accountLength, domain, &domainLength, &use))
+						{
+							LOG_IF_FAILED(logonTrigger->put_UserId(_bstr_t(std::format(L"{}\\{}", domain, account).c_str())));
+						}
+					}
+				}
+			}
+		}
 
 		com_ptr<IRegisteredTask> registeredTask{ nullptr };
 		BSTR name
