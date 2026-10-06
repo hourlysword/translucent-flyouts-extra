@@ -83,6 +83,34 @@ LONG NTAPI TopLevelExceptionFilter(EXCEPTION_POINTERS* exceptionInfo)
 	return result;
 }
 
+namespace
+{
+	// The service host and the short-lived controller invocations (/start, /stop, /uninstall, /kill,
+	// /clearcache) are launched by us as "rundll32 <module>,Main <verb>" to run the exported Main. They must be
+	// allowed to load this DLL even while the service is already running, and they never style their own
+	// windows. Processes the DLL is *injected* into (Explorer, AllowList targets, or a leaked foreign process)
+	// never run Main, so the ",Main" rundll32 entry marker on our own command line distinguishes the two at
+	// load time. Without this, every controller after the host started would fail to load the DLL with
+	// ERROR_DLL_INIT_FAILED ("A dynamic link library (DLL) initialization routine failed") -- which also made
+	// stopping and uninstalling impossible while the service was running.
+	bool LoadedToRunMainEntry() noexcept
+	{
+		const auto commandLine{ GetCommandLineW() };
+		if (!commandLine)
+		{
+			return false;
+		}
+		for (auto cursor = commandLine; *cursor; ++cursor)
+		{
+			if (*cursor == L',' && _wcsnicmp(cursor, L",Main", 5) == 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+}
+
 BOOL APIENTRY DllMain(
 	HMODULE hModule,
 	DWORD  dwReason,
@@ -104,7 +132,10 @@ BOOL APIENTRY DllMain(
 			{
 				return FALSE;
 			}
-			else if (Api::IsServiceRunning(Application::g_serviceName))
+			// The host and the controllers run Main; they load successfully here but activate styling themselves
+			// (the host, via StartService) or not at all (the controllers). Only injected processes fall through
+			// to the scoping gate below.
+			else if (Api::IsServiceRunning(Application::g_serviceName) && !LoadedToRunMainEntry())
 			{
 				// Defence in depth for the per-process scoping model: the host installs in-context hooks only for
 				// allowed processes, but an event raised about one of our windows by another process can still map
