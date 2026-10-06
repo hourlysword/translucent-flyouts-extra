@@ -1,3 +1,34 @@
+> [!IMPORTANT]
+> ## Fork notice — `translucent-flyouts-extra`
+>
+> This is a **modified fork** of [ALTaleX531/TranslucentFlyouts](https://github.com/ALTaleX531/TranslucentFlyouts),
+> which the original author archived on 2025-01-04. It is **not** affiliated with or endorsed by the original author.
+>
+> **Modified by HourlySword, starting 2026-10-06.** This fork keeps the project standalone (not a Windhawk mod) and
+> re-architects the parts behind most of the archived project's open issues:
+>
+> - Injects into **Explorer only by default** (with an opt-in per-app `AllowList`) instead of into every process,
+>   so games, launchers and anti-cheat'd apps are left alone.
+> - Fixes the Fluent-animation **use-after-free** crash (issue #142) and several smaller correctness bugs.
+> - **No Microsoft symbol downloads by default** on Windows 11 24H2+ (build 26100+) — the main cause of
+>   post-update startup failures.
+> - Crash-dump capture and its system-modal dialog are now **opt-in** (issues #139, #144, #154), and the autorun
+>   task no longer errors on fast user switching (issue #152).
+> - Builds against the current Windows SDK (10.0.26100) and the VS 2022/2026 toolsets.
+>
+> See **[STANDALONE.md](./STANDALONE.md)** for the full change list, the new registry switches, and build instructions.
+>
+> > [!WARNING]
+> > These changes are **compile-verified but not yet runtime-tested**. Treat this as a reviewed, buildable
+> > foundation, not a finished release. TranslucentFlyouts injects a DLL into Explorer; validate it on a machine
+> > you can recover before relying on it. STANDALONE.md has a pre-release test checklist.
+>
+> Like the original, this fork is distributed under the **GNU Lesser General Public License v3** (see
+> [COPYING.LESSER](./COPYING.LESSER) and [LICENSE](./LICENSE)). The original author's project notice and credits are
+> preserved verbatim below.
+
+---
+
 > [!NOTE] 
 > The project is no longer active! 
 >   
