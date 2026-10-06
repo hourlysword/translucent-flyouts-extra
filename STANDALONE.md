@@ -7,11 +7,13 @@ apps by default. Date: 2026-10-05. Base: `017970c` (post-v3.1.1 master).
 
 ## Status
 
-Every change here is **compile-verified** on this machine (x64 Release, Visual Studio 2026 Build Tools,
-Windows SDK 10.0.26100). The DLL builds and links cleanly. The behavioural changes — above all the new
-process-scoping model in `ProcessScope.cpp` — have **not been runtime-tested**, because TranslucentFlyouts
-is a global-injection service that was not installed here and should be validated on a real machine first.
-Treat this as a reviewed, buildable foundation, not a shipped release. See "Testing before release" below.
+Every change here is **compile-verified** (x64 Release, Visual Studio 2026 Build Tools, Windows SDK
+10.0.26100), and the core behaviour has been **runtime-validated** on Windows 11 build 26200 (x64, in a VM):
+install/uninstall, Explorer-only scoping, per-app `AllowList`/`BlockList`, the `LegacyGlobalHook` fallback,
+the Fluent-animation crash fix, Explorer-restart re-attach, and symbol-free startup all behave as intended
+(per-item results under "Testing" below). This has been exercised on **one machine and one Windows build**,
+the binaries are **unsigned**, and x86/ARM64 are not built here — so treat it as a validated foundation
+rather than a broadly-tested, shipped release.
 
 ## What changed, and why
 
@@ -91,20 +93,25 @@ On the VS 2026 toolset (v145) only, VC-LTL 5.0.9 disables itself (warning LTL200
 against the regular UCRT; upgrade to VC-LTL 5.3.1 to restore the smaller build, or build with the v143
 toolset from VS 2022. `TFModern` is unmaintained (the author dropped it after v3.1.1) and is not needed.
 
-## Testing before release
+## Testing
 
-The scoping model needs validation on a real install, in this order:
-1. Confirm classic menus, tooltips and `Listviewpopup` dropdowns are still styled in Explorer (desktop,
-   taskbar, Win+X, "Show more options").
-2. Confirm the DLL is **not** present in a running game or other non-Explorer app (Task Manager → Details →
-   find the process → check loaded modules), with default settings.
-3. Add an app to `AllowList` and confirm it is styled; set `LegacyGlobalHook=1` and confirm the old
-   global behaviour returns.
-4. Open and dismiss menus rapidly with `Menu\EnableFluentAnimation=1` (the use-after-free repro) and
-   confirm no crash.
-5. Restart Explorer and confirm TF re-attaches (TaskbarCreated resync).
-6. Switch users and back; confirm no "instance already running" dialog.
+Runtime-validated on 2026-10-06, Windows 11 build 26200 (x64, VM). Results:
 
-Not done here and still worth doing for a real release: Authenticode-signing the binaries, verifying the
-DLL signature in the host before loading it, and making the per-user install path (no `System32` copy)
-the default so Explorer-only mode needs no elevation.
+1. ✅ **Styling** — TF injects into `explorer.exe` and renders styled classic menus (confirmed visually on an
+   `AllowList`ed classic-menu app, which picked up the configured tint and corner settings).
+2. ✅ **Explorer-only scope** — with defaults, `TFMain64.dll` loads only in `explorer.exe`; Notepad and other
+   apps are not injected (checked with `tasklist /m TFMain64.dll` and per-process module lists).
+3. ✅ **Opt-in / opt-out** — `AllowList` opts an app in; `BlockList` keeps one out (including Explorer);
+   `LegacyGlobalHook=1` restores global injection and `=0` returns to Explorer-only.
+4. ✅ **Fluent animation** (`Menu\EnableFluentAnimation=1`) — ~25 rapid open/close/hover cycles, no crash and
+   no dump (the issue-142 repro).
+5. ✅ **Explorer restart** — TF re-attaches to the new Explorer via the TaskbarCreated resync.
+6. ✅ **Opt-in crash handling** — `EnableMiniDump=0` default; no dump or dialog during testing. **No Microsoft
+   symbol download** at startup (compat mode is the default on build 26200).
+7. ✅ **Clean uninstall** — host, task, `System32` helper and registry removed; the DLL unloads from every
+   process and the hosts survive the unhook without crashing.
+
+Not yet exercised: fast user switching (needs a second account — the test VM has one), long-term stability,
+other Windows builds, and x86/ARM64 binaries. Still worth doing for a wider release: Authenticode-signing the
+binaries, verifying the DLL signature in the host before loading it, and making the per-user install path (no
+`System32` copy) the default so Explorer-only mode needs no elevation.
