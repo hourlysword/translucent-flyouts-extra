@@ -18,7 +18,7 @@ Treat this as a reviewed, buildable foundation, not a shipped release. See "Test
 ### 1. Builds on current Windows (commit `5549988`)
 - Windows SDK 10.0.26100 renamed `MENU_POPUPITEM_FOCUSABLE` to `MENU_POPUPITEMFOCUSABLE`; the old name is
   provided when missing so the code compiles on both old and new SDKs.
-- Added a `VERSIONINFO` resource (3.2.0.0). Release DLLs previously had no file version, so neither users
+- Added a `VERSIONINFO` resource (4.0.0.0). Release DLLs previously had no file version, so neither users
   nor the config GUI could tell which build was installed.
 - Stopped tracking IDE user files and `TFModern.aps`, ignored `Build/`, `Cache/`, `packages/`, removed the
   stale `RegHelper.cpp.orig`.

@@ -114,8 +114,8 @@ END
 //
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 3,2,0,0
- PRODUCTVERSION 3,2,0,0
+ FILEVERSION 4,0,0,0
+ PRODUCTVERSION 4,0,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -132,11 +132,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "TranslucentFlyouts contributors"
             VALUE "FileDescription", "TranslucentFlyouts.Win32 core module"
-            VALUE "FileVersion", "3.2.0.0"
+            VALUE "FileVersion", "4.0.0.0"
             VALUE "InternalName", "TFMain"
             VALUE "LegalCopyright", "Copyright (C) ALTaleX531 and contributors. LGPL-3.0."
             VALUE "ProductName", "TranslucentFlyouts"
-            VALUE "ProductVersion", "3.2.0.0"
+            VALUE "ProductVersion", "4.0.0.0"
         END
     END
     BLOCK "VarFileInfo"
